@@ -8,15 +8,25 @@ import Svg, { Path } from 'react-native-svg';
 
 function getTime(date: Date): { hours: number, minutes: number, ampm: number } {
   // Convert to 12-hour format
-	const hours:number = date.getHours()  % 12 || 12;
+	const hours24 = date.getHours();
+	const hours:number = hours24 % 12 || 12;
 	const minutes:number = date.getMinutes() < 10 ? 0 + date.getMinutes() : date.getMinutes();
-  const ampm = hours >= 12 ? 1 : 0;
+  const ampm = hours24 >= 12 ? 1 : 0;
 
 	return {
     hours,
     minutes,
     ampm
   };
+}
+
+function formatDate(date: Date): string {
+	const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+	const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+	const dayName = dayNames[date.getDay()];
+	const monthName = monthNames[date.getMonth()];
+	const day = date.getDate();
+	return `${dayName}, ${monthName} ${day}`;
 }
 
 export default function App() {
@@ -31,6 +41,7 @@ export default function App() {
 	}, []);
 
 	const timeText = useMemo(() => getTime(now), [now]);
+	const dateText = useMemo(() => formatDate(now), [now]);
 
 	if (!fontsLoaded) {
 		return null;
@@ -54,6 +65,7 @@ export default function App() {
 						<Text style={styles.time}>{timeText.hours}:{String(timeText.minutes).padStart(2,'0')}</Text>
 						<Text style={[styles.ampm, { marginLeft: 8 }]}>{timeText.ampm ? 'PM' : 'AM'}</Text>
 					</View>
+					<Text style={styles.date}>{dateText}</Text>
 					<View style={styles.spacerBottom} />
 				</View>
 			</SafeAreaView>
@@ -280,6 +292,12 @@ const styles = StyleSheet.create({
 		lineHeight: Platform.select({ ios: 40, android: 40, default: 40 }),
 		color: '#ffffff',
 		letterSpacing: 1,
+	},
+	date: {
+		fontFamily: 'PublicSans_400Regular',
+		fontSize: 18,
+		color: '#9aa0a6',
+		marginTop: 12,
 	},
 });
 
