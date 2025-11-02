@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "homebase",
-    "slug": "homebase",
+    "name": "glance",
+    "slug": "glance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,12 +10,13 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0a0a0a"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.nadavsavio.glance",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -25,6 +26,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "83c8b110-e469-4e8f-8275-ec4c08832fd1"
+      }
+    },
+    "owner": "nadavsavio"
   }
 }

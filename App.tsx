@@ -3,8 +3,10 @@ import { Platform, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts, PublicSans_400Regular, PublicSans_600SemiBold } from '@expo-google-fonts/public-sans';
 import NetInfo, { useNetInfo } from '@react-native-community/netinfo';
-import { usePowerState, BatteryState } from 'expo-battery';
+import * as Battery from 'expo-battery';
+import { BatteryState } from 'expo-battery';
 import Svg, { Path } from 'react-native-svg';
+import * as SplashScreen from 'expo-splash-screen';
 
 function getTime(date: Date): { hours: number, minutes: number, ampm: number } {
   // Convert to 12-hour format
@@ -29,11 +31,54 @@ function formatDate(date: Date): string {
 	return `${dayName}, ${monthName} ${day}`;
 }
 
+// Keep the splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync();
+
 export default function App() {
 	const [fontsLoaded] = useFonts({ PublicSans_400Regular, PublicSans_600SemiBold });
 	const [now, setNow] = useState<Date>(new Date());
 	const netInfo = useNetInfo();
-	const power = usePowerState();
+	const [power, setPower] = useState<Battery.PowerState | null>(null);
+
+	useEffect(() => {
+		if (fontsLoaded) {
+			SplashScreen.hideAsync();
+		}
+	}, [fontsLoaded]);
+
+	// Initialize battery state and set up listeners
+	useEffect(() => {
+		let batteryLevelListener: Battery.EventSubscription | null = null;
+		let batteryStateListener: Battery.EventSubscription | null = null;
+
+		async function initBattery() {
+			try {
+				const initialState = await Battery.getPowerStateAsync();
+				setPower(initialState);
+
+				// Listen for battery level changes
+				batteryLevelListener = Battery.addBatteryLevelListener(async () => {
+					const state = await Battery.getPowerStateAsync();
+					setPower(state);
+				});
+
+				// Listen for battery state changes (charging/unplugged)
+				batteryStateListener = Battery.addBatteryStateListener(async () => {
+					const state = await Battery.getPowerStateAsync();
+					setPower(state);
+				});
+			} catch (error) {
+				console.error('Error initializing battery:', error);
+			}
+		}
+
+		initBattery();
+
+		return () => {
+			batteryLevelListener?.remove();
+			batteryStateListener?.remove();
+		};
+	}, []);
 
 	useEffect(() => {
 		const intervalId = setInterval(() => setNow(new Date()), 1000);
@@ -89,10 +134,24 @@ function NetworkIndicator({ net, color }: { net: ReturnType<typeof useNetInfo>; 
 	const wifiStrength = (net?.details as any)?.strength as number | undefined; // 0-100 when available
 	const wifiLevel = wifiStrength != null ? Math.max(0, Math.min(3, Math.round(wifiStrength / 34))) : 0;
 
-	// Derive Cellular level (0-4) from generation if available
-	const gen = (net?.details as any)?.cellularGeneration as string | undefined; // '2g'|'3g'|'4g'|'5g'
+	// Derive Cellular level (0-4) from signal strength if available
+	const cellStrength = (net?.details as any)?.signalStrength as number | undefined;
 	let cellLevel = 0;
-	if (gen === '2g') cellLevel = 1; else if (gen === '3g') cellLevel = 2; else if (gen === '4g') cellLevel = 3; else if (gen === '5g') cellLevel = 4;
+	if (cellStrength != null) {
+		// Signal strength can be in dBm (typically -140 to -44) or percentage (0-100)
+		if (cellStrength >= 0 && cellStrength <= 100) {
+			// Percentage format (0-100)
+			cellLevel = Math.max(0, Math.min(4, Math.round((cellStrength / 100) * 4)));
+		} else if (cellStrength >= -140 && cellStrength <= -44) {
+			// dBm format: map -140 to -44 dBm to 0-4 bars
+			// -44 dBm (excellent) = 4 bars, -140 dBm (very poor) = 0 bars
+			const normalized = (cellStrength + 140) / (-44 + 140); // 0 to 1
+			cellLevel = Math.max(0, Math.min(4, Math.round(normalized * 4)));
+		} else {
+			// Unknown format, assume moderate signal
+			cellLevel = 2;
+		}
+	}
 
 	const wifiActive = connected && type === 'wifi';
 	const cellActive = connected && type !== 'wifi' && type !== 'unknown' && type !== 'none';
@@ -163,7 +222,7 @@ function WifiIcon({
     );
 }
 
-function formatBatteryPercent(power: ReturnType<typeof usePowerState>): string {
+function formatBatteryPercent(power: Battery.PowerState | null): string {
 	if (!power || power.batteryLevel == null || power.batteryLevel < 0) return '—%';
 	return `${Math.round(power.batteryLevel * 100)}%`;
 }
