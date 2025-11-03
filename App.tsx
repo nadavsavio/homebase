@@ -5,8 +5,87 @@ import { useFonts, PublicSans_400Regular, PublicSans_600SemiBold } from '@expo-g
 import NetInfo, { useNetInfo } from '@react-native-community/netinfo';
 import * as Battery from 'expo-battery';
 import { BatteryState } from 'expo-battery';
+import { EventSubscription } from 'expo-modules-core';
 import Svg, { Path } from 'react-native-svg';
 import * as SplashScreen from 'expo-splash-screen';
+import { Ionicons } from '@expo/vector-icons';
+
+// Type definitions for Open Meteo API response
+interface HourlyWeather {
+  time: string[];
+  temperature_2m: number[];
+  weathercode: number[];
+  precipitation_probability: number[];
+}
+
+interface DailyWeather {
+  time: string[];
+  weathercode: number[];
+  temperature_2m_max: number[];
+  temperature_2m_min: number[];
+  precipitation_probability_max: number[];
+}
+
+interface WeatherApiResponse {
+  latitude: number;
+  longitude: number;
+  generationtime_ms: number;
+  utc_offset_seconds: number;
+  timezone: string;
+  timezone_abbreviation: string;
+  elevation: number;
+  current: {
+    time: string;
+    temperature_2m: number;
+    apparent_temperature: number;
+    weathercode: number;
+    precipitation_probability: number;
+  };
+  hourly: HourlyWeather;
+  daily: DailyWeather;
+}
+
+// Default location (can be made user-specified later)
+const DEFAULT_LOCATION = {
+  latitude: 37.8044,
+  longitude: -122.2711,
+  name: 'Oakland, CA'
+};
+
+// Weather icon mapping function based on WMO Weather interpretation codes
+const getWeatherIcon = (code: number): keyof typeof Ionicons.glyphMap => {
+  switch (code) {
+    case 0: return 'sunny-outline'; // Clear sky
+    case 1: return 'partly-sunny-outline'; // Mainly clear
+    case 2: return 'partly-sunny-outline'; // Partly cloudy
+    case 3: return 'cloudy-outline'; // Overcast
+    case 45: return 'cloudy-outline'; // Fog
+    case 48: return 'cloudy-outline'; // Depositing rime fog
+    case 51: return 'rainy-outline'; // Light drizzle
+    case 53: return 'rainy-outline'; // Moderate drizzle
+    case 55: return 'rainy-outline'; // Dense drizzle
+    case 56: return 'rainy-outline'; // Light freezing drizzle
+    case 57: return 'rainy-outline'; // Dense freezing drizzle
+    case 61: return 'rainy-outline'; // Slight rain
+    case 63: return 'rainy-outline'; // Moderate rain
+    case 65: return 'rainy-outline'; // Heavy rain
+    case 66: return 'rainy-outline'; // Light freezing rain
+    case 67: return 'rainy-outline'; // Heavy freezing rain
+    case 71: return 'snow-outline'; // Slight snow fall
+    case 73: return 'snow-outline'; // Moderate snow fall
+    case 75: return 'snow-outline'; // Heavy snow fall
+    case 77: return 'snow-outline'; // Snow grains
+    case 80: return 'rainy-outline'; // Slight rain showers
+    case 81: return 'rainy-outline'; // Moderate rain showers
+    case 82: return 'rainy-outline'; // Violent rain showers
+    case 85: return 'snow-outline'; // Slight snow showers
+    case 86: return 'snow-outline'; // Heavy snow showers
+    case 95: return 'thunderstorm-outline'; // Thunderstorm
+    case 96: return 'thunderstorm-outline'; // Thunderstorm with slight hail
+    case 99: return 'thunderstorm-outline'; // Thunderstorm with heavy hail
+    default: return 'cloudy-outline'; // Default to cloudy
+  }
+};
 
 function getTime(date: Date): { hours: number, minutes: number, ampm: number } {
   // Convert to 12-hour format
@@ -39,6 +118,9 @@ export default function App() {
 	const [now, setNow] = useState<Date>(new Date());
 	const netInfo = useNetInfo();
 	const [power, setPower] = useState<Battery.PowerState | null>(null);
+	const [weather, setWeather] = useState<WeatherApiResponse | null>(null);
+	const [weatherLoading, setWeatherLoading] = useState(true);
+	const [weatherError, setWeatherError] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (fontsLoaded) {
@@ -48,8 +130,8 @@ export default function App() {
 
 	// Initialize battery state and set up listeners
 	useEffect(() => {
-		let batteryLevelListener: Battery.EventSubscription | null = null;
-		let batteryStateListener: Battery.EventSubscription | null = null;
+		let batteryLevelListener: EventSubscription | null = null;
+		let batteryStateListener: EventSubscription | null = null;
 
 		async function initBattery() {
 			try {
@@ -85,6 +167,39 @@ export default function App() {
 		return () => clearInterval(intervalId);
 	}, []);
 
+	// Fetch weather data
+	useEffect(() => {
+		const fetchWeather = async () => {
+			setWeatherError(null);
+			try {
+				const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${DEFAULT_LOCATION.latitude}&longitude=${DEFAULT_LOCATION.longitude}&current=temperature_2m,apparent_temperature,weathercode,precipitation_probability&hourly=temperature_2m,weathercode,precipitation_probability&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=1&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&timezone=auto`;
+				
+				const controller = new AbortController();
+				const timeoutId = setTimeout(() => controller.abort(), 10000);
+				
+				const response = await fetch(apiUrl, { signal: controller.signal });
+				clearTimeout(timeoutId);
+				
+				if (!response.ok) {
+					throw new Error(`HTTP error! status: ${response.status}`);
+				}
+				
+				const data = await response.json() as WeatherApiResponse;
+				setWeather(data);
+			} catch (error) {
+				console.error('Error fetching weather:', error);
+				if (error instanceof Error) {
+					console.error('Error details:', error.message);
+					setWeatherError(error.message);
+				}
+			} finally {
+				setWeatherLoading(false);
+			}
+		};
+		
+		fetchWeather();
+	}, []);
+
 	const timeText = useMemo(() => getTime(now), [now]);
 	const dateText = useMemo(() => formatDate(now), [now]);
 
@@ -111,6 +226,8 @@ export default function App() {
 						<Text style={[styles.ampm, { marginLeft: 8 }]}>{timeText.ampm ? 'PM' : 'AM'}</Text>
 					</View>
 					<Text style={styles.date}>{dateText}</Text>
+					<View style={styles.spacerMiddle} />
+					{!weatherLoading && weather && <WeatherSummary weather={weather} />}
 					<View style={styles.spacerBottom} />
 				</View>
 			</SafeAreaView>
@@ -244,6 +361,72 @@ function BatteryIcon({ level, charging }: { level: number; charging: boolean }) 
 	);
 }
 
+function ClosedUmbrellaIcon({ color }: { color: string }) {
+	return (
+		<Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+			<Path 
+				d="M12 2C12.4 2 12.8 2.2 12.9 2.6L17.5 15H13V19C13 20.7 11.7 22 10 22S7 20.7 7 19V18H9V19C9 19.6 9.4 20 10 20C10.6 20 11 19.6 11 19V15H6.5L11.1 2.6C11.2 2.2 11.6 2 12 2M12 5.9L9.4 13H14.7L12 5.9Z" 
+				fill={color}
+			/>
+		</Svg>
+	);
+}
+
+function TemperatureTrendArrow({ isRising }: { isRising: boolean }) {
+	return (
+		<Text style={styles.weatherTrendArrow}>{isRising ? '⇡' : '⇣'}</Text>
+	);
+}
+
+function WeatherSummary({ weather }: { weather: WeatherApiResponse }) {
+	const currentTemp = Math.round(weather.current.temperature_2m);
+	const todayLow = Math.round(weather.daily.temperature_2m_min[0]);
+	const todayHigh = Math.round(weather.daily.temperature_2m_max[0]);
+	const weatherIcon = getWeatherIcon(weather.current.weathercode);
+	
+	// Determine temperature trend by comparing current temp with next hour's temp
+	const currentTime = weather.current.time;
+	const currentIndex = weather.hourly.time.findIndex(t => t === currentTime);
+	const nextHourIndex = currentIndex !== -1 ? currentIndex + 1 : -1;
+	const isRising = nextHourIndex !== -1 && weather.hourly.temperature_2m[nextHourIndex] > weather.current.temperature_2m;
+	
+	// Calculate max precipitation probability for the rest of today
+	const restOfDayProbs = weather.hourly.precipitation_probability.slice(nextHourIndex);
+	const maxPrecipitation = restOfDayProbs.length > 0 ? Math.max(...restOfDayProbs) : weather.current.precipitation_probability;
+	
+	return (
+		<View style={styles.weatherContainer}>
+			<View style={styles.weatherMainRow}>
+				<View style={styles.weatherIcon}>
+					<Ionicons name={weatherIcon} size={22} color="#ffffff" />
+				</View>
+				<Text style={styles.weatherTemp}>{currentTemp}°</Text>
+				<TemperatureTrendArrow isRising={isRising} />
+				<View style={styles.weatherPrecipSection}>
+					{maxPrecipitation < 3 ? (
+						<>
+							<ClosedUmbrellaIcon color="#9aa0a6" />
+							<Text style={[styles.weatherPrecip, styles.weatherPrecipClosedIcon]}> {maxPrecipitation}%</Text>
+						</>
+					) : (
+						<>
+							<Ionicons 
+								name={maxPrecipitation >= 20 ? "umbrella" : "umbrella-outline"} 
+								size={18} 
+								color={maxPrecipitation >= 20 ? "#ffffff" : "#9aa0a6"} 
+							/>
+							<Text style={[styles.weatherPrecip, maxPrecipitation >= 20 && styles.weatherPrecipWhite]}> {maxPrecipitation}%</Text>
+						</>
+					)}
+				</View>
+			</View>
+			<View style={styles.weatherRow}>
+				<Text style={styles.weatherText}>{todayLow}° / {todayHigh}°</Text>
+			</View>
+		</View>
+	);
+}
+
 const styles = StyleSheet.create({
 	safeArea: {
 		flex: 1,
@@ -331,8 +514,11 @@ const styles = StyleSheet.create({
 	spacerTop: {
 		flex: 1,
 	},
+	spacerMiddle: {
+		flex: 1,
+	},
 	spacerBottom: {
-		flex: 2,
+		flex: 1,
 	},
 	timeRow: {
 		flexDirection: 'row',
@@ -354,9 +540,64 @@ const styles = StyleSheet.create({
 	},
 	date: {
 		fontFamily: 'PublicSans_400Regular',
-		fontSize: 18,
+		fontSize: 20,
 		color: '#9aa0a6',
 		marginTop: 12,
+	},
+	weatherContainer: {
+		marginTop: 24,
+		alignItems: 'center',
+	},
+	weatherMainRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'center',
+		gap: 0,
+	},
+	weatherIcon: {
+		marginRight: 4,
+	},
+	weatherTemp: {
+		fontFamily: 'PublicSans_600SemiBold',
+		fontSize: 20,
+		color: '#ffffff',
+		marginRight: 2,
+	},
+	weatherTrendArrow: {
+		fontFamily: 'PublicSans_600SemiBold',
+		fontSize: 20,
+		color: '#9aa0a6',
+	},
+	weatherRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'center',
+		gap: 0,
+		marginTop: 4,
+	},
+	weatherPrecipSection: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 0,
+		marginLeft: 16,
+	},
+	weatherText: {
+		fontFamily: 'PublicSans_400Regular',
+		fontSize: 20,
+		color: '#9aa0a6',
+		display: 'none'
+	},
+	weatherPrecip: {
+		fontFamily: 'PublicSans_400Regular',
+		fontSize: 20,
+		color: '#9aa0a6',
+	},
+	weatherPrecipWhite: {
+		color: '#ffffff',
+	},
+	weatherPrecipClosedIcon: {
+		marginLeft: -2,
+		marginBottom: 2,
 	},
 });
 
