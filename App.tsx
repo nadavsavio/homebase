@@ -198,6 +198,10 @@ export default function App() {
 		};
 		
 		fetchWeather();
+		
+		// Refresh every 15 minutes
+		const intervalId = setInterval(fetchWeather, 15 * 60 * 1000);
+		return () => clearInterval(intervalId);
 	}, []);
 
 	const timeText = useMemo(() => getTime(now), [now]);
