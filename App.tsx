@@ -255,9 +255,15 @@ function NetworkIndicator({ net, color }: { net: ReturnType<typeof useNetInfo>; 
 	const wifiStrength = (net?.details as any)?.strength as number | undefined; // 0-100 when available
 	const wifiLevel = wifiStrength != null ? Math.max(0, Math.min(3, Math.round(wifiStrength / 34))) : 0;
 
+	const wifiActive = connected && type === 'wifi';
+	// Consider cellular active if type is 'cellular' or if connected and not WiFi/unknown/none
+	const cellActive = connected && (type === 'cellular' || (type !== 'wifi' && type !== 'unknown' && type !== 'none'));
+
 	// Derive Cellular level (0-4) from signal strength if available
 	const cellStrength = (net?.details as any)?.signalStrength as number | undefined;
+	const gen = (net?.details as any)?.cellularGeneration as string | undefined; // '2g'|'3g'|'4g'|'5g'
 	let cellLevel = 0;
+	
 	if (cellStrength != null) {
 		// Signal strength can be in dBm (typically -140 to -44) or percentage (0-100)
 		if (cellStrength >= 0 && cellStrength <= 100) {
@@ -268,14 +274,12 @@ function NetworkIndicator({ net, color }: { net: ReturnType<typeof useNetInfo>; 
 			// -44 dBm (excellent) = 4 bars, -140 dBm (very poor) = 0 bars
 			const normalized = (cellStrength + 140) / (-44 + 140); // 0 to 1
 			cellLevel = Math.max(0, Math.min(4, Math.round(normalized * 4)));
-		} else {
-			// Unknown format, assume moderate signal
-			cellLevel = 2;
 		}
+		// If format is unknown, leave cellLevel at 0 (will show dim bars)
 	}
-
-	const wifiActive = connected && type === 'wifi';
-	const cellActive = connected && type !== 'wifi' && type !== 'unknown' && type !== 'none';
+	
+	// Determine if we have signal data or just showing dim bars
+	const hasSignalData = cellLevel > 0;
 
 	return (
 		<View style={[styles.netRow, { paddingVertical: 4 }]}>
@@ -284,7 +288,21 @@ function NetworkIndicator({ net, color }: { net: ReturnType<typeof useNetInfo>; 
 				{Array.from({ length: 4 }).map((_, i) => {
 					const h = 4 + i * 3;
 					const on = i < cellLevel;
-					return <View key={i} style={[styles.netCellBar, { height: h, opacity: cellActive ? (on ? 1 : 0.45) : 0.45, backgroundColor: color }]} />;
+					const noCellData = cellActive && !hasSignalData;
+					return (
+						<View 
+							key={i} 
+							style={[
+								styles.netCellBar, 
+								noCellData ? styles.netCellBarNoData : null,
+								{ 
+									height: h, 
+									opacity: cellActive ? (on ? 1 : 0.75) : 0.45, 
+									backgroundColor: color 
+								}
+							]} 
+						/>
+					);
 				})}
 			</View>
 
@@ -388,13 +406,51 @@ function WeatherSummary({ weather }: { weather: WeatherApiResponse }) {
 	const todayHigh = Math.round(weather.daily.temperature_2m_max[0]);
 	const weatherIcon = getWeatherIcon(weather.current.weathercode);
 	
-	// Determine temperature trend by comparing current temp with next hour's temp
+	// Determine temperature trend by checking the next 3 hours for the first change
 	const currentTime = weather.current.time;
-	const currentIndex = weather.hourly.time.findIndex(t => t === currentTime);
-	const nextHourIndex = currentIndex !== -1 ? currentIndex + 1 : -1;
-	const isRising = nextHourIndex !== -1 && weather.hourly.temperature_2m[nextHourIndex] > weather.current.temperature_2m;
+	let currentIndex = weather.hourly.time.findIndex(t => t === currentTime);
+	
+	// If exact match not found, find the closest hour (shouldn't happen, but fallback)
+	if (currentIndex === -1 && weather.hourly.time.length > 0) {
+		const currentTimeMs = new Date(currentTime).getTime();
+		let closestIndex = 0;
+		let closestDiff = Math.abs(new Date(weather.hourly.time[0]).getTime() - currentTimeMs);
+		
+		for (let i = 1; i < weather.hourly.time.length; i++) {
+			const diff = Math.abs(new Date(weather.hourly.time[i]).getTime() - currentTimeMs);
+			if (diff < closestDiff) {
+				closestDiff = diff;
+				closestIndex = i;
+			}
+		}
+		currentIndex = closestIndex;
+	}
+	
+	const currentTempValue = weather.current.temperature_2m;
+	let isRising: boolean | null = null;
+	
+	if (currentIndex !== -1) {
+		// Check the next 3 hours for the first temperature change
+		// Round to integers since that's what we display
+		const currentTempRounded = Math.round(currentTempValue);
+		
+		for (let i = 1; i <= 3; i++) {
+			const nextIndex = currentIndex + i;
+			if (nextIndex < weather.hourly.temperature_2m.length) {
+				const nextTemp = weather.hourly.temperature_2m[nextIndex];
+				const nextTempRounded = Math.round(nextTemp);
+				
+				// Check if there's a change (at least 1 degree difference)
+				if (nextTempRounded !== currentTempRounded) {
+					isRising = nextTempRounded > currentTempRounded;
+					break;
+				}
+			}
+		}
+	}
 	
 	// Calculate max precipitation probability for the rest of today
+	const nextHourIndex = currentIndex !== -1 ? currentIndex + 1 : -1;
 	const restOfDayProbs = weather.hourly.precipitation_probability.slice(nextHourIndex);
 	const maxPrecipitation = restOfDayProbs.length > 0 ? Math.max(...restOfDayProbs) : weather.current.precipitation_probability;
 	
@@ -405,7 +461,8 @@ function WeatherSummary({ weather }: { weather: WeatherApiResponse }) {
 					<Ionicons name={weatherIcon} size={22} color="#ffffff" />
 				</View>
 				<Text style={styles.weatherTemp}>{currentTemp}°</Text>
-				<TemperatureTrendArrow isRising={isRising} />
+				{isRising !== null && <TemperatureTrendArrow isRising={isRising} />}
+				<Text style={styles.weatherTempTrendEndpoint}>{isRising !== null && isRising ? todayHigh : todayLow}°</Text>
 				<View style={styles.weatherPrecipSection}>
 					{maxPrecipitation < 3 ? (
 						<>
@@ -476,6 +533,11 @@ const styles = StyleSheet.create({
 		width: 3,
 		backgroundColor: '#ffffff',
 		borderRadius: 1,
+	},
+	netCellBarNoData: {
+		// Style for dim bars when no signal data is available
+		// Color can be customized here later
+		backgroundColor: '#ffffff',
 	},
 	netWifi: {
 		flexDirection: 'column',
@@ -570,7 +632,15 @@ const styles = StyleSheet.create({
 	weatherTrendArrow: {
 		fontFamily: 'PublicSans_600SemiBold',
 		fontSize: 20,
-		color: '#9aa0a6',
+		color: '#ffffff',
+		opacity: 0.25,
+	},
+	weatherTempTrendEndpoint: {
+		fontFamily: 'PublicSans_600SemiBold',
+		fontSize: 20,
+		color: '#ffffff',
+		opacity: 0.25,
+		marginLeft: 2,
 	},
 	weatherRow: {
 		flexDirection: 'row',
@@ -583,7 +653,7 @@ const styles = StyleSheet.create({
 		flexDirection: 'row',
 		alignItems: 'center',
 		gap: 0,
-		marginLeft: 16,
+		marginLeft: 24,
 	},
 	weatherText: {
 		fontFamily: 'PublicSans_400Regular',
